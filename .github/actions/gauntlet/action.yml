@@ -1,0 +1,101 @@
+name: "Gauntlet"
+description: "Fire the adversarial suite at your agent and gate CI on the findings. Optionally posts the report as a PR comment."
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  target:
+    description: "Agent HTTP endpoint (POST, JSON in/out)."
+    required: true
+  canaries:
+    description: "Path to a canaries JSON file (what your agent must never do)."
+    required: false
+    default: ""
+  fail-on:
+    description: "CI gate severity: CRITICAL | HIGH | MEDIUM | LOW | INFO."
+    required: false
+    default: "HIGH"
+  request-field:
+    description: "JSON field to put the probe in."
+    required: false
+    default: "message"
+  response-field:
+    description: "JSON field to read the reply from."
+    required: false
+    default: "response"
+  header:
+    description: "Extra request header 'Key: Value' (single)."
+    required: false
+    default: ""
+  comment:
+    description: "Post/update a PR comment with the report (pull_request events only)."
+    required: false
+    default: "true"
+  version:
+    description: "PyPI version spec for gauntlet-agent (ignored if this repo's package is checked out)."
+    required: false
+    default: "gauntlet-agent"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Gauntlet
+      shell: bash
+      run: |
+        set -e
+        PKG_ROOT="${{ github.action_path }}/../../.."
+        if [ -f "$PKG_ROOT/pyproject.toml" ]; then
+          echo "Installing Gauntlet from the checked-out repo."
+          pip install -e "$PKG_ROOT"
+        else
+          echo "Installing ${{ inputs.version }} from PyPI."
+          pip install "${{ inputs.version }}"
+        fi
+
+    - name: Run Gauntlet
+      id: run
+      shell: bash
+      run: |
+        set +e
+        ARGS=(run --target "${{ inputs.target }}"
+              --request-field "${{ inputs.request-field }}"
+              --response-field "${{ inputs.response-field }}"
+              --fail-on "${{ inputs.fail-on }}"
+              --json "${RUNNER_TEMP}/gauntlet-report.json")
+        if [ -n "${{ inputs.canaries }}" ]; then ARGS+=(--canaries "${{ inputs.canaries }}"); fi
+        if [ -n "${{ inputs.header }}" ]; then ARGS+=(--header "${{ inputs.header }}"); fi
+        gauntlet "${ARGS[@]}"
+        echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on PR
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python "${{ github.action_path }}/format_comment.py" \
+          "${RUNNER_TEMP}/gauntlet-report.json" "${{ inputs.fail-on }}" \
+          > "${RUNNER_TEMP}/gauntlet-comment.md" || exit 0
+        # Update an existing Gauntlet comment if present, else create one.
+        MARKER="<!-- gauntlet-report -->"
+        PR="${{ github.event.pull_request.number }}"
+        EXISTING=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" \
+          --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -1 || true)
+        if [ -n "$EXISTING" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING}" \
+            -F body=@"${RUNNER_TEMP}/gauntlet-comment.md" >/dev/null || true
+        else
+          gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" \
+            -F body=@"${RUNNER_TEMP}/gauntlet-comment.md" >/dev/null || true
+        fi
+
+    - name: Enforce gate
+      shell: bash
+      run: |
+        code="${{ steps.run.outputs.exit_code }}"
+        if [ "$code" != "0" ]; then
+          echo "::error::Gauntlet found a finding at or above ${{ inputs.fail-on }}. Failing the job."
+          exit 1
+        fi
+        echo "Gauntlet gate passed."

@@ -1,0 +1,41 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - name: Offline self-test
+        run: python tests/test_offline.py
+      - name: Engine regression tests
+        run: python tests/test_engine.py
+      - name: Full test suite
+        run: pytest -q
+
+  benchmark:
+    name: benchmark reproduces
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python benchmark/run_benchmark.py
+      - name: Assert headline numbers
+        run: |
+          python - <<'PY'
+          import json
+          s = json.load(open("benchmark/stats.json"))
+          assert s["agents_tested"] == 9 and s["agents_failing_high_gate"] == 8, s
+          assert s["hardened_passed"] is True and s["hardened_findings"] == 0, s
+          print("benchmark reproduces:", s["pct_failing_high_gate"], "% fail, hardened clean")
+          PY

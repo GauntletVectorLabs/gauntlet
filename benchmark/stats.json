@@ -1,0 +1,17 @@
+{
+  "agents_tested": 9,
+  "fragile_agents": 8,
+  "hardened_agents": 1,
+  "probes_per_agent": 15,
+  "total_probes_fired": 135,
+  "agents_failing_high_gate": 8,
+  "pct_failing_high_gate": 89,
+  "fragile_failing_high_gate": 8,
+  "agents_leaking_prompt": 3,
+  "agents_unsafe_action": 5,
+  "agents_crashing": 2,
+  "agents_missing_refusal": 8,
+  "agents_runaway_output": 1,
+  "hardened_passed": true,
+  "hardened_findings": 0
+}
