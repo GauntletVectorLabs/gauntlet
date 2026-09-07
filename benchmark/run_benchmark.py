@@ -15,7 +15,10 @@ import sys
 from collections import Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+# Works in the monorepo (core under packages/gauntlet) and in the flat OSS repo
+# (core at the repo root), so this script is copy-portable between the two.
+_CORE = os.path.join(ROOT, "packages", "gauntlet")
+sys.path.insert(0, _CORE if os.path.isdir(os.path.join(_CORE, "gauntlet")) else ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gauntlet.adversaries import builtin_probes          # noqa: E402

@@ -39,3 +39,15 @@ jobs:
           assert s["hardened_passed"] is True and s["hardened_findings"] == 0, s
           print("benchmark reproduces:", s["pct_failing_high_gate"], "% fail, hardened clean")
           PY
+      - name: Adaptive vs fixed (the moat proof)
+        run: python benchmark/adaptive_benchmark.py
+      - name: Assert adaptivity earns its keep
+        run: |
+          python - <<'PY'
+          import json
+          s = json.load(open("benchmark/adaptive_stats.json"))
+          assert s["fixed_suite_agents_broken"] == 0, s
+          assert s["adaptive_agents_broken"] == s["agents_tested"], s
+          assert s["uplift_pct_points"] == 100, s
+          print("adaptive uplift reproduces: fixed 0 vs adaptive", s["adaptive_agents_broken"], "of", s["agents_tested"])
+          PY

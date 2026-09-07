@@ -1,0 +1,13 @@
+{
+  "corpus": "guarded",
+  "agents_tested": 4,
+  "budget_per_goal": 24,
+  "seed": 1337,
+  "fixed_suite_agents_broken": 0,
+  "fixed_suite_break_rate_pct": 0,
+  "adaptive_agents_broken": 4,
+  "adaptive_break_rate_pct": 100,
+  "uplift_pct_points": 100,
+  "mean_queries_to_break": 6.8,
+  "max_queries_to_break": 17
+}

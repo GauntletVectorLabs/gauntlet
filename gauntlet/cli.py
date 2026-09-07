@@ -117,6 +117,71 @@ def cmd_calibrate(args):
     sys.exit(0)
 
 
+def cmd_attack(args):
+    """Adaptive, research-grounded attack search against an agent endpoint."""
+    from .attack.engine import run_attack
+    from .attack.objective import goals_from_canaries, goal_from_spec
+    from .attack.models import get_attacker
+    from .report import print_attack_report
+
+    canaries = _load_canaries(args.canaries)
+    extra_headers = {}
+    if args.header:
+        for h in args.header:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                extra_headers[k.strip()] = v.strip()
+
+    if args.goal:
+        goals = [goal_from_spec(g, canaries) for g in args.goal]
+    else:
+        goals = goals_from_canaries(canaries)
+    if not goals:
+        print("[attack] No goals: pass --canaries with never_output_substrings / "
+              "unsafe_compliance_substrings / forbidden_tools, or use --goal.",
+              file=sys.stderr)
+        sys.exit(2)
+
+    attacker = get_attacker(use_llm=args.llm, model=args.model, seed=args.seed)
+
+    print("Gauntlet: adaptive '{}' attack ({} goal(s), budget {}, seed {}) against {} ...\n".format(
+        args.strategy, len(goals), args.budget, args.seed, args.target))
+    try:
+        report = run_attack(
+            args.target, goals,
+            strategy=args.strategy, budget=args.budget, seed=args.seed,
+            attacker=attacker,
+            request_field=args.request_field, response_field=args.response_field,
+            timeout=args.timeout, extra_headers=extra_headers,
+            history_field=args.history_field, trace_field=args.trace_field,
+        )
+    except SystemExit as e:  # LLMAttacker with no key, etc.
+        print("[attack] {}".format(e), file=sys.stderr)
+        sys.exit(2)
+
+    rd = report.to_dict()
+    print_attack_report(rd)
+
+    if args.json:
+        from .report import write_json
+        write_json(rd, args.json)
+        print("  JSON report written to {}".format(args.json))
+
+    if args.html:
+        from .report import write_attack_html
+        write_attack_html(rd, args.html)
+        print("  HTML report written to {} (shareable)".format(args.html))
+
+    # Gate ethos: a successful attack == your agent is breakable == CI should fail.
+    if report.summary["goals_broken"] > 0:
+        print("\n  FAIL: {} of {} goal(s) broken (ASR {:.0%}).".format(
+            report.summary["goals_broken"], report.summary["goals_total"],
+            report.summary["attack_success_rate"]))
+        sys.exit(1)
+    print("\n  PASS: no goal broken within budget.")
+    sys.exit(0)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="gauntlet", description="Break your agent before your users do.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -157,6 +222,35 @@ def main(argv=None):
     c.add_argument("--min-kappa", type=float, default=0.6,
                    help="Minimum Cohen's kappa to pass (default 0.6).")
     c.set_defaults(func=cmd_calibrate)
+
+    a = sub.add_parser("attack",
+                       help="Adaptive attack search: iteratively evolve an input that breaks your agent.")
+    a.add_argument("--target", required=True, help="Agent HTTP endpoint (POST, JSON in/out).")
+    a.add_argument("--canaries", help="JSON canaries file; goals are derived from it.")
+    a.add_argument("--goal", action="append",
+                   help="Explicit goal override (repeatable): leak | unsafe | server_error | "
+                        "runaway | tool, optionally 'kind:substring'. Overrides --canaries goals.")
+    a.add_argument("--strategy", default="bon", choices=["bon", "pair", "tap", "crescendo", "rainbow"],
+                   help="Search strategy (default: bon). "
+                        "bon=Best-of-N, pair=PAIR, tap=Tree-of-Attacks, crescendo=multi-turn, "
+                        "rainbow=quality-diversity portfolio.")
+    a.add_argument("--budget", type=int, default=24, help="Max target queries per goal (default 24).")
+    a.add_argument("--seed", type=int, default=1337, help="RNG seed for reproducible runs (default 1337).")
+    a.add_argument("--request-field", default="message", help="JSON field to put the attack in (default: message).")
+    a.add_argument("--response-field", default="response", help="JSON field to read the reply from (default: response).")
+    a.add_argument("--history-field",
+                   help="For crescendo: JSON field to send the running transcript in, e.g. 'messages'.")
+    a.add_argument("--trace-field",
+                   help="JSON field in the response holding tool calls to grade, e.g. 'trace'.")
+    a.add_argument("--header", action="append", help="Extra request header 'Key: Value' (repeatable).")
+    a.add_argument("--timeout", type=float, default=20.0, help="Per-request timeout in seconds.")
+    a.add_argument("--json", help="Write the attack report (with lineage) to this path.")
+    a.add_argument("--html", help="Write a shareable, self-contained HTML attack report to this path.")
+    a.add_argument("--llm", action="store_true",
+                   help="Use the optional LLM attacker to refine attacks (needs ANTHROPIC_API_KEY).")
+    a.add_argument("--model", default=os.environ.get("GAUNTLET_MODEL", "claude-haiku-4-5-20251001"),
+                   help="Claude model for the --llm attacker.")
+    a.set_defaults(func=cmd_attack)
 
     args = parser.parse_args(argv)
     args.func(args)
